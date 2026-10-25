@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian OS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23ff7a1a' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23ff7a1a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="boot" class="boot">
+  <div class="boot-ring"></div>
+  <p id="boot-msg">Initialising Meridian OS…</p>
+  <button id="boot-retry" class="btn accent" hidden>Retry</button>
+</div>
+
+<div id="os" class="os" hidden>
+  <aside class="col col-left">
+    <section class="panel" id="panel-apps">
+      <header><h2><span class="p-icon">▤</span> Micro Apps</h2><button class="mini" data-open-module="apps">All apps</button></header>
+      <div class="panel-body" id="apps-list"></div>
+    </section>
+    <section class="panel" id="panel-calendar">
+      <header><h2><span class="p-icon">▦</span> Calendar</h2><span class="chip local" id="cal-state">local</span></header>
+      <div class="panel-body">
+        <div class="clock-row"><span class="clock" id="clock-time">--:--:--</span><span class="ampm" id="clock-ampm"></span></div>
+        <div class="clock-date" id="clock-date"></div>
+        <div class="dotgrid" id="dotgrid" aria-label="This month"></div>
+        <div class="mini-label">WHAT'S NEXT</div>
+        <ul class="next-list" id="next-list"></ul>
+      </div>
+    </section>
+    <section class="panel" id="panel-connections">
+      <header><h2><span class="p-icon">◉</span> Connections</h2><button class="mini" data-open-module="settings">Manage</button></header>
+      <div class="panel-body" id="connections-list"></div>
+    </section>
+  </aside>
+
+  <main class="centre">
+    <div class="brand">
+      <div class="brand-row"><div class="brand-mark" aria-hidden="true"></div>
+        <h1>MERIDIAN <span>OS</span></h1></div>
+      <p class="tagline">Local-first agentic command centre · v0.1.0</p>
+      <div class="util-row">
+        <button class="util" data-open-module="assistant">⌘ Assistant</button>
+        <button class="util" data-open-module="search">Search</button>
+        <button class="util accent" id="capture-btn">＋ Capture</button>
+      </div>
+    </div>
+    <div class="stage">
+      <canvas id="core" aria-hidden="true"></canvas>
+      <nav class="orbit" id="orbit" aria-label="Modules"></nav>
+    </div>
+  </main>
+
+  <aside class="col col-right">
+    <section class="panel" id="panel-email">
+      <header><h2><span class="p-icon">✉</span> Email</h2><span class="chip" id="email-state">—</span></header>
+      <div class="panel-body" id="email-body"></div>
+    </section>
+    <section class="panel" id="panel-skills">
+      <header><h2><span class="p-icon">✦</span> Skills Deck</h2><button class="mini" data-open-module="skills">Open deck</button></header>
+      <div class="panel-body">
+        <input id="skill-filter" class="inline-input" placeholder="Filter skills…" aria-label="Filter skills">
+        <div id="skills-cards"></div>
+      </div>
+    </section>
+    <section class="panel" id="panel-routines">
+      <header><h2><span class="p-icon">⟳</span> Routines</h2><button class="mini" data-open-module="routines">Open</button></header>
+      <div class="panel-body" id="routines-list"></div>
+    </section>
+  </aside>
+
+  <footer class="dock">
+    <input id="capture-input" placeholder="Quick capture — type and press Enter" aria-label="Quick capture">
+    <div class="dock-status"><span class="dot ok" id="conn-dot" title="Server connection"></span><span id="dock-clock">--:--</span></div>
+  </footer>
+</div>
+
+<div id="overlay" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="overlay-title">
+  <div class="frame">
+    <header class="frame-head">
+      <div><h3 id="overlay-title"></h3><span class="sub" id="overlay-sub"></span></div>
+      <button id="overlay-close" class="icon-btn" aria-label="Close">✕</button>
+    </header>
+    <div class="frame-body" id="overlay-body"></div>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/core.js"></script>
+<script src="/js/views.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
