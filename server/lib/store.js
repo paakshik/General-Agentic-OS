@@ -70,6 +70,8 @@ class Store {
   constructor(dataDir) {
     this.dir = path.join(dataDir, 'stores');
     U.ensureDir(this.dir);
+    this._cache = new Map(); // in-memory authoritative copy per collection
+    this._queues = new Map(); // write queues per collection
     this.seed();
   }
 
@@ -83,6 +85,8 @@ class Store {
       if (!fs.existsSync(this.file(name))) {
         U.writeJsonAtomic(this.file(name), seeds[name] || []);
       }
+      // prime cache
+      this._cache.set(name, this._readFromDisk(name));
     }
     if (!fs.existsSync(this.file('integrations'))) {
       U.writeJsonAtomic(this.file('integrations'), SEED_INTEGRATIONS);
@@ -95,38 +99,74 @@ class Store {
     }
   }
 
-  list(name) {
-    if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
+  _readFromDisk(name) {
     const v = U.readJson(this.file(name), []);
     return Array.isArray(v) ? v : [];
+  }
+
+  // Get the authoritative in-memory copy, loading from disk if needed
+  _getCache(name) {
+    if (!this._cache.has(name)) {
+      this._cache.set(name, this._readFromDisk(name));
+    }
+    return this._cache.get(name);
+  }
+
+  // Enqueue a write operation for a collection to serialize concurrent writes
+  _enqueueWrite(name, fn) {
+    if (!this._queues.has(name)) {
+      this._queues.set(name, Promise.resolve());
+    }
+    const queue = this._queues.get(name);
+    const next = queue.then(fn).catch((e) => { throw e; });
+    this._queues.set(name, next);
+    return next;
+  }
+
+  list(name) {
+    if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
+    // Return a copy of the authoritative in-memory cache
+    return [...this._getCache(name)];
   }
 
   save(name, arr) {
     if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
     let out = arr;
     if (name === 'activity' && arr.length > 200) out = arr.slice(arr.length - 200);
-    U.writeJsonAtomic(this.file(name), out);
+    // Update cache first (authoritative), then persist
+    this._cache.set(name, [...out]);
+    return this._enqueueWrite(name, () => U.writeJsonAtomic(this.file(name), out));
   }
 
   add(name, item) {
-    const arr = this.list(name);
-    const full = Object.assign({ id: U.uid(), createdAt: U.nowIso(), updatedAt: U.nowIso() }, item);
+    if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
+    const arr = this._getCache(name);
+    const full = Object.assign({ id: U.uid(), createdAt: U.nowIso(), updatedAt: U.nowIso(), rev: 1 }, item);
     arr.push(full);
     this.save(name, arr);
     return full;
   }
 
   update(name, id, patch) {
-    const arr = this.list(name);
+    if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
+    const arr = this._getCache(name);
     const i = arr.findIndex((x) => x.id === id);
     if (i === -1) throw Object.assign(new Error('Not found'), { status: 404 });
-    arr[i] = Object.assign({}, arr[i], patch, { updatedAt: U.nowIso() });
+
+    // Optimistic concurrency: check rev if provided
+    const expectedRev = patch && patch._expectedRev;
+    if (expectedRev !== undefined && arr[i].rev !== expectedRev) {
+      throw Object.assign(new Error('Conflict: item was modified by another request'), { status: 409 });
+    }
+
+    arr[i] = Object.assign({}, arr[i], patch, { updatedAt: U.nowIso(), rev: (arr[i].rev || 0) + 1 });
     this.save(name, arr);
     return arr[i];
   }
 
   remove(name, id) {
-    const arr = this.list(name);
+    if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
+    const arr = this._getCache(name);
     const next = arr.filter((x) => x.id !== id);
     this.save(name, next);
     return arr.length - next.length;
