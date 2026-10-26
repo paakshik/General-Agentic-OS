@@ -51,7 +51,7 @@
     $('apps-list').innerHTML = APPS.map((a) =>
       '<div class="app-row"><div class="app-ico">' + a.icon + '</div>' +
       '<div class="app-meta"><b>' + esc(a.title) + '</b><span>' + esc(a.desc) + '</span></div>' +
-      '<button class="mini" data-launch="' + a.id + '">Open</button></div>'
+      '<button class="mini" data-launch="' + esc(a.id) + '">Open</button></div>'
     ).join('');
     document.querySelectorAll('[data-launch]').forEach((b) =>
       b.addEventListener('click', () => openApp(b.dataset.launch)));

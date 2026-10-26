@@ -54,8 +54,32 @@ function uid() {
   return crypto.randomUUID();
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
+// Local-date helpers. The UI calendar uses the machine's local day, so server-side
+// day boundaries (brief dates, daily run limits) must match it, not UTC. In timezones
+// ahead of UTC, a UTC-based date lags the user's day until midnight UTC passes.
+function fmtLocalDay(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-module.exports = { redactSecrets, safeJoin, ensureDir, readJson, writeJsonAtomic, nowIso, uid, today };
+function today() {
+  return fmtLocalDay(new Date());
+}
+
+// Local calendar day of an ISO timestamp; '' when the timestamp is unparseable.
+function localDay(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : fmtLocalDay(d);
+}
+
+// Atomic text write (memory files): temp file + rename, so a crash never truncates.
+function writeFileAtomic(file, content) {
+  ensureDir(path.dirname(file));
+  const tmp = file + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  fs.writeFileSync(tmp, String(content));
+  fs.renameSync(tmp, file);
+}
+
+module.exports = {
+  redactSecrets, safeJoin, ensureDir, readJson, writeJsonAtomic, writeFileAtomic,
+  nowIso, uid, today, localDay
+};

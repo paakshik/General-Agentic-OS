@@ -1,53 +1,41 @@
 # General Agentic OS — Status
 
-**Current state:** Milestone 0 in progress  
-**Implementation state:** Not verified  
+**Product name:** Meridian OS (working name; renaming is a one-line change)
+**Current milestone:** Milestone 1 complete and verified; parts of M2–M3 included
 **Last updated:** 2026-10-26
+**Direction:** Browser-based, local-first command centre (user decision; no Electron). Single-click Windows launch preserved.
 
-## Current baseline
+## Verified facts (this session, with evidence)
 
-The Overseer's initial audit reported that `D:\General-Agentic-OS` did not exist, while `D:\Coding-Agentic-OS` and `D:\nim-claude` were present. The Overseer then created the General Agentic OS directory and wrote an initial `OVERSEER-REPORT.md` recording the blocked state.
+- Runtime: Node v24.11.0, npm 11.6.1, Windows 11 Pro. No dependencies installed (zero-dep by design).
+- `node --test test/server.test.js`: **15/15 passing**. Coverage: health/static, CRUD persistence across full server restart, unknown-collection rejection, path traversal blocked (static + memory), skill validation/artifact invocation, self-triggered approval requirement, skill import validation + duplicate rejection, routine runs + persistent history, approval gates, integration honesty gate (409 without config), memory note/edit/proposal-approval, search, local deterministic assistant, secret redaction, graceful shutdown.
+- Cold start: `launch\start-meridian.cmd --no-open` exited 0, `/api/health` returned `{"ok":true,...,"uptimeSec":2}`, `index.html` and all 4 JS assets + CSS served 200, `/api/bootstrap` returned live state.
+- Live behaviour on the running server: assistant `summary` returned real local counts; routine `inbox-watch` ran with an honest step log; `PUT /api/integrations/email-imap {status:"connected"}` was refused (409, "Configuration required").
+- Desktop shortcut: `C:\Users\Admin\OneDrive\Desktop\Meridian OS.lnk`, target verified as `D:\General-Agentic-OS\launch\start-meridian.cmd` (read back from the .lnk after creation).
+- Graceful shutdown: `launch\stop-meridian.cmd` printed "Server stopped." and the health endpoint stopped responding.
 
-The current report states that no project plan, status, architecture, or security documents were present at the time of that inspection. It does not establish that application code exists or runs.
+## What exists now
 
-This document is an initial planning checkpoint. It was prepared separately and has **not yet been confirmed as copied into the user's Windows project directory or reviewed by the running Maker/Overseer sessions**.
+- `server/server.js` + `server/lib/{util,store,skills,routines,memory,provider}.js` — zero-dependency API + static server (binds 127.0.0.1 only).
+- `public/` — command-centre UI: canvas particle core (adaptive, reduced-motion fallback), orbital navigation, six panel modules, five micro-apps, quick capture, search, toasts, settings.
+- `data/` (created at first boot; gitignored) — JSON stores, skill/routine manifests, Markdown memory, logs. Example items are labelled and removable in Settings.
+- `launch/` — start (single-click, already-running detection, failure reporting), stop (graceful), create-shortcut (idempotent).
+- `test/server.test.js` — 15 tests. `README.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `PLAN.md` (§8 records the stack decision), `CHANGELOG.md`.
 
-## Verified facts from the supplied audit report
+## Honest limitations (not faked anywhere)
 
-- The intended project path is `D:\General-Agentic-OS`.
-- The directory was created by the Overseer after the initial inspection.
-- The initial audit was blocked because the project was not initialized and the required planning documents were absent.
-- The Maker must confirm the current directory contents before creating files or choosing implementation details.
+- Email/calendar integrations are registered but disconnected; the UI says so and the server refuses fake connection states.
+- The assistant is a local deterministic command engine. No model provider is configured or used; Milestone 4 requires verified credentials and explicit approval.
+- Routines run manually only; no background scheduler exists (deliberate, pending your approval).
+- No git repository yet (Overseer prerequisite; `git init` left for your go-ahead since committing needs your request).
 
-## Not yet verified
+## Next steps (Milestone 2–3 polish → 4)
 
-- Runtime/toolchain availability and selected dependency versions.
-- Application source code or package manifest.
-- Database schema, initialization, and persistence.
-- UI behavior or central visualization performance.
-- Micro-app behavior.
-- Skills discovery, composition, or execution.
-- Memory persistence and user controls.
-- Routine execution, scheduler behavior, or limits.
-- Model/provider configuration or any external integration.
-- Windows desktop shortcut and cold-start behavior.
-- Typecheck, lint, tests, and packaging.
-
-## Current milestone objectives
-
-- [ ] Maker inspects `D:\General-Agentic-OS` and the actual Windows runtime environment.
-- [ ] Maker reviews and reconciles `PLAN.md`, `docs/ARCHITECTURE.md`, and `docs/SECURITY.md` with the original product prompt.
-- [ ] Maker records the actual stack decision and any justified deviations from the proposal.
-- [ ] Maker creates/updates `CHANGELOG.md` without inventing historical changes.
-- [ ] Overseer independently audits the documents and records findings.
-
-## Immediate next actions
-
-1. Transfer these planning files into `D:\General-Agentic-OS` without overwriting unrelated existing work.
-2. Have the Maker inspect the target directory and environment before implementing.
-3. Resolve any architecture/security findings before proceeding to Milestone 1 implementation.
-4. Update this file with observed facts, exact commands, and actual results. Do not mark a criterion complete from plans alone.
+1. Run `npm test` and the desktop shortcut yourself; report anything visual to fix.
+2. Skills: version history display, skill composition inside one routine (already partially demonstrated by morning-brief → daily-brief).
+3. Memory review loop polish; activity-driven routine suggestions (suggestions only, never auto-created).
+4. Milestone 4 provider integration only after you approve a provider and scope.
 
 ## Recovery note
 
-If the Maker session stops or is rate-limited, resume by reading `STATUS.md`, `PLAN.md`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`, and `docs/SECURITY.md`, then inspect the current working tree. Continue from the first incomplete checklist item and preserve all existing work.
+Resume by reading `STATUS.md` → `PLAN.md` → `CHANGELOG.md`, then run `npm test` to confirm the baseline. All state lives in `data\`; restoring that folder restores the app.

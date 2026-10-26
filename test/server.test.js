@@ -9,6 +9,20 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
+
+// Raw socket-level request helper (fetch forbids setting the Host header).
+function rawRequest(method, reqPath, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: PORT, method, path: reqPath, headers: headers || {} }, (res) => {
+      let buf = '';
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: buf }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 const ROOT = path.join(__dirname, '..');
 const SERVER = path.join(ROOT, 'server', 'server.js');
@@ -227,8 +241,12 @@ test('memory note capture, file edit, and proposal approval', async () => {
 });
 
 test('search finds store items and memory lines', async () => {
-  const r = await (await fetch(BASE + '/api/search?q=persist-me')).json();
-  assert.ok(r.stores.tasks || r.stores.notes || r.stores.docs, 'searched stores');
+  await fetch(BASE + '/api/store/tasks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'searchable-unique-xyz', done: false })
+  });
+  const r = await (await fetch(BASE + '/api/search?q=searchable-unique-xyz')).json();
+  assert.ok(r.stores.tasks, 'searched stores');
   const m = await (await fetch(BASE + '/api/search?q=test capture alpha')).json();
   assert.ok((m.memory || []).length >= 1, 'searched memory');
 });

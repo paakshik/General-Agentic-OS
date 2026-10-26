@@ -16,7 +16,7 @@ const VIEWS = {};
 /* ---------------- module: apps gallery ---------------- */
 VIEWS.apps = function (el, ctx) {
   el.innerHTML = '<div class="card-grid">' + APPS.map((a) =>
-    '<div class="card"><h4><span class="app-ico" style="display:inline-flex;vertical-align:-6px;margin-right:7px">' + a.icon + '</span>' + esc(a.title) + '</h4><p>' + esc(a.desc) + '</p><div class="row"><button class="btn tiny accent" data-open-app="' + a.id + '">Open</button></div></div>'
+    '<div class="card"><h4><span class="app-ico" style="display:inline-flex;vertical-align:-6px;margin-right:7px">' + a.icon + '</span>' + esc(a.title) + '</h4><p>' + esc(a.desc) + '</p><div class="row"><button class="btn tiny accent" data-open-app="' + esc(a.id) + '">Open</button></div></div>'
   ).join('') + '</div>';
   el.querySelectorAll('[data-open-app]').forEach((b) =>
     b.addEventListener('click', () => ctx.openApp(b.dataset.openApp)));
@@ -36,9 +36,9 @@ VIEWS['app-inbox'] = function (el, ctx) {
   }
   list.innerHTML = items.map((i) =>
     '<div class="app-row"><div class="app-meta"><b>' + esc(i.text) + '</b><span>' + esc(i.source || 'capture') + ' · ' + timeAgo(i.createdAt) + (i.demo ? ' · example' : '') + '</span></div>' +
-    '<button class="btn tiny" data-to-task="' + i.id + '">→ Task</button>' +
-    '<button class="btn tiny" data-to-note="' + i.id + '">→ Note</button>' +
-    '<button class="icon-btn" data-del="' + i.id + '" title="Discard">✕</button></div>'
+    '<button class="btn tiny" data-to-task="' + esc(i.id) + '">→ Task</button>' +
+    '<button class="btn tiny" data-to-note="' + esc(i.id) + '">→ Note</button>' +
+    '<button class="icon-btn" data-del="' + esc(i.id) + '" title="Discard">✕</button></div>'
   ).join('');
   list.querySelectorAll('[data-to-task]').forEach((b) => b.addEventListener('click', async () => {
     const it = items.find((x) => x.id === b.dataset.toTask);
@@ -82,7 +82,7 @@ VIEWS['app-notes'] = function (el, ctx) {
     const notes = (ctx.S.notes || []).filter((n) => !q ||
       (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
     listEl.innerHTML = notes.length ? notes.map((n) =>
-      '<div class="app-row" data-id="' + n.id + '"><div class="app-meta"><b>' + esc(n.title || 'Untitled') + '</b><span>' + timeAgo(n.updatedAt) + (n.demo ? ' · example' : '') + '</span></div></div>'
+      '<div class="app-row" data-id="' + esc(n.id) + '"><div class="app-meta"><b>' + esc(n.title || 'Untitled') + '</b><span>' + timeAgo(n.updatedAt) + (n.demo ? ' · example' : '') + '</span></div></div>'
     ).join('') : '<div class="empty">No notes match.</div>';
     listEl.querySelectorAll('[data-id]').forEach((r) => r.addEventListener('click', () => load(r.dataset.id)));
   }
@@ -124,10 +124,10 @@ VIEWS['app-tasks'] = function (el, ctx) {
   function render() {
     const tasks = (ctx.S.tasks || []).filter((t) => (tab === 'open' ? !t.done : !!t.done));
     listEl.innerHTML = tasks.length ? tasks.map((t) =>
-      '<div class="app-row"><input type="checkbox" data-toggle="' + t.id + '"' + (t.done ? ' checked' : '') + ' style="width:auto">' +
+      '<div class="app-row"><input type="checkbox" data-toggle="' + esc(t.id) + '"' + (t.done ? ' checked' : '') + ' style="width:auto">' +
       '<div class="app-meta"><b style="' + (t.done ? 'text-decoration:line-through;color:var(--faint)' : '') + '">' + esc(t.title) + '</b>' +
       '<span>' + esc(t.priority || 'normal') + (t.demo ? ' · example' : '') + '</span></div>' +
-      '<button class="icon-btn" data-del="' + t.id + '" title="Delete">✕</button></div>'
+      '<button class="icon-btn" data-del="' + esc(t.id) + '" title="Delete">✕</button></div>'
     ).join('') : '<div class="empty">No ' + tab + ' tasks.</div>';
     listEl.querySelectorAll('[data-toggle]').forEach((c) => c.addEventListener('change', async () => {
       try { await API.put('/api/store/tasks/' + c.dataset.toggle, { done: c.checked }); await ctx.refresh(true); render(); }
@@ -170,7 +170,7 @@ VIEWS['app-docs'] = function (el, ctx) {
   function renderList() {
     const docs = ctx.S.docs || [];
     el.querySelector('#d-list').innerHTML = docs.length ? docs.map((d) =>
-      '<div class="app-row" data-id="' + d.id + '"><div class="app-meta"><b>' + esc(d.title || 'Untitled') + '</b><span>' + esc(d.source || 'doc') + ' · ' + timeAgo(d.updatedAt) + (d.demo ? ' · example' : '') + '</span></div></div>'
+      '<div class="app-row" data-id="' + esc(d.id) + '"><div class="app-meta"><b>' + esc(d.title || 'Untitled') + '</b><span>' + esc(d.source || 'doc') + ' · ' + timeAgo(d.updatedAt) + (d.demo ? ' · example' : '') + '</span></div></div>'
     ).join('') : '<div class="empty">No documents yet.</div>';
     el.querySelector('#d-list').querySelectorAll('[data-id]').forEach((r) =>
       r.addEventListener('click', () => load(r.dataset.id)));
@@ -209,8 +209,8 @@ VIEWS['app-launcher'] = function (el, ctx) {
     '<div class="card"><h4>' + esc(r.manifest.name) + ' <span class="type-chip">' + esc(r.manifest.mode) + '</span></h4>' +
     '<p>' + esc(r.manifest.description) + '</p>' +
     '<div class="row"><span class="sub">Last run: ' + timeAgo(r.lastRun && r.lastRun.startedAt) + '</span>' +
-    '<button class="btn tiny accent" data-run="' + r.id + '">▶ Run</button>' +
-    '<button class="btn tiny" data-gate="' + r.id + '">Run w/ approval</button></div></div>'
+    '<button class="btn tiny accent" data-run="' + esc(r.id) + '">▶ Run</button>' +
+    '<button class="btn tiny" data-gate="' + esc(r.id) + '">Run w/ approval</button></div></div>'
   ).join('') || '<div class="empty">No routines found.</div>';
   el.querySelector('#l-runs').innerHTML = renderRunsTable((ctx.S.runs || []).slice(0, 12));
   el.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', () => runRoutine(b.dataset.run, false)));
@@ -413,8 +413,8 @@ VIEWS.memory = function (el, ctx) {
     const ps = ctx.S.proposals || [];
     el.querySelector('#m-proposals').innerHTML = ps.length ? ps.map((p) =>
       '<div class="app-row"><div class="app-meta"><b>' + esc(p.action) + ': ' + esc(p.targetPath) + '</b><span>' + timeAgo(p.createdAt) + '</span></div>' +
-      '<button class="btn tiny" data-approve="' + p.id + '">Approve</button>' +
-      '<button class="btn tiny" data-reject="' + p.id + '">Reject</button></div>'
+      '<button class="btn tiny" data-approve="' + esc(p.id) + '">Approve</button>' +
+      '<button class="btn tiny" data-reject="' + esc(p.id) + '">Reject</button></div>'
     ).join('') : '<div class="empty">No pending proposals.</div>';
     el.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', async () => {
       try { await API.post('/api/memory/proposals/' + b.dataset.approve + '/approve'); toast('Proposal applied', 'ok'); await ctx.refresh(true); VIEWS.memory(el, ctx); }

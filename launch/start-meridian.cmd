@@ -28,7 +28,7 @@ start "Meridian OS server" /min cmd /c "node ""%ROOT%\server\server.js"" --port 
 
 set /a TRIES=0
 :waitloop
-timeout /t 1 /nobreak >nul
+ping -n 2 127.0.0.1 >nul
 powershell -NoProfile -Command "try{ $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:%PORT%/api/health'; if($r.StatusCode -eq 200){exit 0} }catch{ exit 1 }"
 if not errorlevel 1 goto opened
 set /a TRIES+=1

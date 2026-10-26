@@ -35,10 +35,23 @@ function toast(msg, type) {
   }, 4200);
 }
 
+// Escapes the five HTML-significant characters for text and quoted-attribute
+// contexts. Every untrusted value placed via innerHTML or into an attribute
+// must pass through here (fixes A1; required at every sink for A2).
+// Entity strings are built by concatenation so the source never contains a
+// raw HTML entity that text-processing tools could decode back into the
+// character it names (which is how this map was silently corrupted before).
+const ENTITY_AMP = '&' + 'amp;';
+const HTML_ENTITIES = {
+  '&': ENTITY_AMP,
+  '<': '&' + 'lt;',
+  '>': '&' + 'gt;',
+  '"': '&' + 'quot;',
+  "'": '&' + '#39;'
+};
+
 function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
-    { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;' }[c]
-  ));
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => HTML_ENTITIES[c]);
 }
 
 function fmtTime(iso) {
@@ -54,4 +67,9 @@ function timeAgo(iso) {
   if (s < 3600) return Math.round(s / 60) + 'm ago';
   if (s < 86400) return Math.round(s / 3600) + 'h ago';
   return fmtDate(iso);
+}
+
+// Node-side access for regression tests; browsers never define module.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { esc, fmtTime, fmtDate, timeAgo };
 }

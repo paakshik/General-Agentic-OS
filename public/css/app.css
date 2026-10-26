@@ -21,6 +21,8 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* The hidden attribute must always win over class-based display values (A0). */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);

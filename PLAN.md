@@ -149,3 +149,20 @@ Acceptance criteria:
 - Do not install global tools, elevate privileges, change global configuration, or configure external services without justification and user approval where needed.
 - Never put credentials in source files, test fixtures, logs, or committed examples.
 - Keep project state recoverable at checkpoints. Update `STATUS.md`, `PLAN.md`, and `CHANGELOG.md` as work advances.
+
+## 8. Stack decision record — Milestone 1 (2026-10-26)
+
+The user directed a **browser-based, local-first virtual command centre, not an Electron application**, while keeping single-click Windows launching. This overrides the Electron/React/Vite/SQLite proposal in §2 for Milestone 1. Decision recorded per the original PLAN requirement to document justified deviations:
+
+| Area | Decision | Rationale |
+|---|---|---|
+| Shell | Browser tab at `http://127.0.0.1:4780`, launched by `launch\start-meridian.cmd` + Desktop shortcut | User direction; removes Electron ABI/native-module risk entirely |
+| Server | Zero-dependency Node.js (v24.11.0 verified) HTTP server, bound to `127.0.0.1` only | No `npm install` step means the fastest, most reliable cold start; nothing to break |
+| Frontend | Vanilla JS + hand-written CSS design system, canvas particle core | No build step; full control of the visual language; light CPU/GPU |
+| Persistence | JSON files under `data\` with atomic temp-file + rename writes | Durable, inspectable, trivially back-up-able; adequate for local single-user scale; SQLite can be introduced later without UI changes |
+| Validation | Server-side checks at every trust boundary (collections, skill/routine manifests, memory paths, body size) | Runtime validation where untrusted data actually enters |
+| Tests | `node:test` built-in runner, 15 tests | No new dependencies |
+
+The Electron path remains available in a later milestone if the user asks for a desktop window; no UI code assumes a browser-only API beyond standard web standards.
+
+**Single-click launch remains satisfied:** the Desktop shortcut targets `D:\General-Agentic-OS\launch\start-meridian.cmd`, which starts the server only if unhealthy, waits for `/api/health`, opens the default browser, and reports failures with the log path.
