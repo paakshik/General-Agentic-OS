@@ -32,12 +32,15 @@ function log(level, msg) {
 
 // ---- boot stores ----
 const store = new Store(DATA_DIR);
+if (store._lastRecovery) {
+  log('WARN', 'Recovered store file from backup: ' + store._lastRecovery.file + ' (' + store._lastRecovery.path + ')');
+}
 skillsLib.seedSkills(SKILLS_DIR);
 routinesLib.seedRoutines(ROUTINES_DIR);
 const memory = new Memory(DATA_DIR);
 
 function notify(message, type) {
-  store.add('activity', { type: type || 'system', message: U.redactSecrets(String(message)) });
+  store.add('activity', { type: type || 'system', message: U.redactSecrets(String(message)) }).catch((e) => log('ERROR', 'notify failed: ' + e.message));
 }
 
 function skillCtx() {
@@ -49,33 +52,36 @@ function skillCtx() {
       .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))
       .slice(0, 5),
     inboxItems: store.list('inbox'),
-    createDoc: (title, content, source) => store.add('docs', { title, content, source: source || 'skill' })
+    createDoc: async (title, content, source) => {
+      const doc = await store.add('docs', { title, content, source: source || 'skill' });
+      return doc;
+    }
   };
 }
 
-function invokeSkillById(id, inputs, opts) {
+async function invokeSkillById(id, inputs, opts) {
   const entry = skillsLib.findSkill(SKILLS_DIR, id);
   if (!entry) throw Object.assign(new Error('Unknown skill: ' + id), { status: 404 });
   if (!entry.valid) throw Object.assign(new Error('Skill manifest is invalid: ' + entry.errors.join(' ')), { status: 400 });
   return skillsLib.invoke(entry, inputs, skillCtx(), opts || {});
 }
 
-function runRoutineById(id, approved) {
+async function runRoutineById(id, approved) {
   const entry = routinesLib.findRoutine(ROUTINES_DIR, id);
   if (!entry) throw Object.assign(new Error('Unknown routine: ' + id), { status: 404 });
   if (!entry.valid) throw Object.assign(new Error('Routine manifest is invalid: ' + entry.errors.join(' ')), { status: 400 });
   const ctx = {
     listStore: (name) => store.list(name),
-    invokeSkill: (sid, inputs, opts) => invokeSkillById(sid, inputs, opts),
+    invokeSkill: async (sid, inputs, opts) => invokeSkillById(sid, inputs, opts),
     notify: (msg) => notify(msg, 'routine'),
     runsToday: (rid) =>
       store.list('runs').filter((r) => r.routineId === rid && String(r.startedAt || '').slice(0, 10) === U.today()).length
   };
-  const record = routinesLib.run(entry, ctx, !!approved);
+  const record = await routinesLib.run(entry, ctx, !!approved);
   record.id = U.uid();
   record.routineId = entry.id;
   record.routineName = entry.manifest.name;
-  store.add('runs', record);
+  await store.add('runs', record);
   return record;
 }
 
@@ -112,13 +118,13 @@ function searchAll(q) {
 
 function assistantCtx() {
   return {
-    addInbox: (text) => store.add('inbox', { text, source: 'assistant' }),
+    addInbox: async (text) => { await store.add('inbox', { text, source: 'assistant' }); },
     memoryNote: (text) => memory.note(text),
-    runRoutine: (id, approved) => {
-      try { return runRoutineById(id, approved); } catch (e) { return { error: e.message, status: 'failed' }; }
+    runRoutine: async (id, approved) => {
+      try { return await runRoutineById(id, approved); } catch (e) { return { error: e.message, status: 'failed' }; }
     },
-    invokeSkill: (id, inputs, opts) => {
-      try { return invokeSkillById(id, inputs, opts); } catch (e) { return { status: 'failed', reason: e.message }; }
+    invokeSkill: async (id, inputs, opts) => {
+      try { return await invokeSkillById(id, inputs, opts); } catch (e) { return { status: 'failed', reason: e.message }; }
     },
     search: searchAll,
     counts: () => ({
@@ -141,8 +147,11 @@ function bootstrap() {
     errors: r.errors,
     lastRun: runs.find((x) => x.routineId === r.id) || null
   }));
+  const settings = store.getSettings();
+  const llm = (settings && settings.llm) || { enabled: false };
+  const bootstrapProvider = (llm.enabled && llm.baseUrl) ? 'litellm' : 'local-deterministic';
   return {
-    settings: store.getSettings(),
+    settings,
     integrations: store.getIntegrations(),
     inbox: store.list('inbox'),
     tasks: store.list('tasks'),
@@ -154,7 +163,8 @@ function bootstrap() {
     routines,
     runs,
     memory: memory.list(),
-    proposals: store.list('proposals').filter((p) => p.status === 'pending')
+    proposals: store.list('proposals').filter((p) => p.status === 'pending'),
+    bootstrapProvider
   };
 }
 
@@ -174,17 +184,20 @@ function serveStatic(req, res, pathname) {
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const file = U.safeJoin(PUBLIC_DIR, rel);
   if (!file) {
+    setCSP(res, false);
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Forbidden' }));
     return;
   }
   let target = file;
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
+    setCSP(res, false);
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
     return;
   }
   const ext = path.extname(target).toLowerCase();
+  setCSP(res, false);
   res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(target).pipe(res);
 }
@@ -215,7 +228,30 @@ function readBody(req) {
   });
 }
 
+// CSP headers for security
+const CSP_STATIC = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+const CSP_API = "default-src 'none'; frame-ancestors 'none'";
+
+function setCSP(res, isApi) {
+  res.setHeader('Content-Security-Policy', isApi ? CSP_API : CSP_STATIC);
+}
+
+// Validate origin for sensitive endpoints (CSRF protection)
+// Allows requests without Origin/Referer (same-origin browser requests)
+// and validates Origin/Referer when present
+function validateOrigin(req) {
+  const origin = req.headers.origin || req.headers.referer;
+  if (!origin) return true; // Same-origin requests may not send Origin/Referer
+  try {
+    const url = new URL(origin);
+    return url.hostname === '127.0.0.1' && url.port === String(PORT);
+  } catch (e) {
+    return false;
+  }
+}
+
 function send(res, code, data) {
+  setCSP(res, true);
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
 }
@@ -237,15 +273,15 @@ async function handleApi(req, res, pathname, query) {
     if (method === 'GET') return send(res, 200, store.list(name));
     if (method === 'POST') {
       const body = await readBody(req);
-      const item = store.add(name, body.item || body);
+      const item = await store.add(name, body.item || body);
       return send(res, 201, item);
     }
     if (method === 'PUT' && seg[3]) {
       const body = await readBody(req);
-      return send(res, 200, store.update(name, seg[3], body.patch || body));
+      return send(res, 200, await store.update(name, seg[3], body.patch || body));
     }
     if (method === 'DELETE' && seg[3]) {
-      const n = store.remove(name, seg[3]);
+      const n = await store.remove(name, seg[3]);
       return send(res, 200, { removed: n });
     }
   }
@@ -268,7 +304,7 @@ async function handleApi(req, res, pathname, query) {
   }
   if (seg[1] === 'skills' && seg[3] === 'invoke' && method === 'POST') {
     const body = await readBody(req);
-    const result = invokeSkillById(seg[2], body.inputs || {}, { confirm: !!body.confirm });
+    const result = await invokeSkillById(seg[2], body.inputs || {}, { confirm: !!body.confirm });
     notify('Invoked skill "' + seg[2] + '" → ' + result.status, 'skills');
     return send(res, 200, result);
   }
@@ -283,7 +319,7 @@ async function handleApi(req, res, pathname, query) {
   }
   if (seg[1] === 'routines' && seg[3] === 'run' && method === 'POST') {
     const body = await readBody(req);
-    const record = runRoutineById(seg[2], !!body.approved);
+    const record = await runRoutineById(seg[2], !!body.approved);
     return send(res, 200, record);
   }
   if (pathname === '/api/runs' && method === 'GET') {
@@ -317,7 +353,7 @@ async function handleApi(req, res, pathname, query) {
     if (!body.targetPath || typeof body.content !== 'string') {
       return send(res, 400, { error: 'targetPath and content are required.' });
     }
-    const p = store.add('proposals', {
+    const p = await store.add('proposals', {
       targetPath: String(body.targetPath), content: body.content,
       action: body.action === 'update' ? 'update' : 'create', status: 'pending'
     });
@@ -328,7 +364,7 @@ async function handleApi(req, res, pathname, query) {
     const p = arr.find((x) => x.id === seg[3]);
     if (!p) return send(res, 404, { error: 'Proposal not found' });
     memory.write(p.targetPath, p.content);
-    store.update('proposals', p.id, { status: 'approved', decidedAt: U.nowIso() });
+    await store.update('proposals', p.id, { status: 'approved', decidedAt: U.nowIso() });
     notify('Memory proposal approved: ' + p.targetPath, 'memory');
     return send(res, 200, { approved: p.id, path: p.targetPath });
   }
@@ -336,7 +372,7 @@ async function handleApi(req, res, pathname, query) {
     const arr = store.list('proposals');
     const p = arr.find((x) => x.id === seg[3]);
     if (!p) return send(res, 404, { error: 'Proposal not found' });
-    store.update('proposals', p.id, { status: 'rejected', decidedAt: U.nowIso() });
+    await store.update('proposals', p.id, { status: 'rejected', decidedAt: U.nowIso() });
     return send(res, 200, { rejected: p.id });
   }
 
@@ -364,12 +400,15 @@ async function handleApi(req, res, pathname, query) {
   // /api/assistant
   if (pathname === '/api/assistant' && method === 'POST') {
     const body = await readBody(req);
-    const r = runAssistant(body.command, assistantCtx());
+    const r = await runAssistant(body.command, assistantCtx());
     return send(res, 200, r);
   }
 
   // /api/open-data (Windows only, opens Explorer on the data folder)
   if (pathname === '/api/open-data' && method === 'POST') {
+    if (!validateOrigin(req)) {
+      return send(res, 403, { error: 'Not allowed from this origin' });
+    }
     if (process.platform !== 'win32') return send(res, 501, { error: 'Only supported on Windows.' });
     const { spawn } = require('child_process');
     spawn('explorer', [DATA_DIR], { detached: true, stdio: 'ignore' }).unref();
@@ -378,16 +417,26 @@ async function handleApi(req, res, pathname, query) {
 
   // /api/shutdown
   if (pathname === '/api/shutdown' && method === 'POST') {
+    if (!validateOrigin(req)) {
+      return send(res, 403, { error: 'Shutdown not allowed from this origin' });
+    }
     const body = await readBody(req).catch(() => ({}));
     if (!(body.confirm === true || query.get('confirm') === 'true')) {
       return send(res, 400, { error: 'Shutdown requires { confirm: true }.' });
     }
     send(res, 200, { stopping: true });
     log('INFO', 'Shutdown requested via API. Goodbye.');
-    setTimeout(() => {
-      server.close(() => process.exit(0));
-      setTimeout(() => process.exit(0), 500).unref();
-    }, 120);
+    // Flush pending writes before exit
+    store.flush().then(() => {
+      log('INFO', 'Pending writes flushed.');
+    }).catch((e) => {
+      log('ERROR', 'Flush failed: ' + e.message);
+    }).finally(() => {
+      setTimeout(() => {
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 500).unref();
+      }, 120);
+    });
     return;
   }
 

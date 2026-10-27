@@ -1,139 +1,157 @@
 # General Agentic OS — Architecture
 
-**Status:** Proposed architecture for Milestone 0; not yet verified against a created application.  
-**Purpose:** Define module boundaries, data flow, and safe evolution without prematurely introducing infrastructure.
+**Status:** Implemented and verified for Milestone 1 (browser-based).  
+**Purpose:** Document the actual module boundaries, data flow, and security controls.
 
 ## 1. Architectural principles
 
-- Local-first, desktop-oriented, and usable without external integrations.
+- Local-first, browser-based, usable without external integrations.
 - Small vertical slices; every milestone must be runnable and testable.
 - Visible and inspectable workflow behavior rather than opaque autonomous execution.
 - Skills, routines, memory, micro-apps, and provider integrations remain distinct modules with explicit interfaces.
-- Renderer code is untrusted relative to the Electron main process.
+- Server code is the trust boundary; browser renderer is untrusted.
 - No feature is presented as connected or successful unless runtime state confirms it.
 - Plain-text maps and files are the default for human-inspectable knowledge; a vector database is not a baseline requirement.
 
-## 2. Proposed system shape
+## 2. Actual system shape (Milestone 1 — browser-based)
 
 ```text
 Windows Desktop Shortcut
           |
           v
-Project-local launcher / Electron runtime
+launch/start-meridian.cmd (checks health, starts server, opens browser)
           |
-          +---------------- Electron Main Process ----------------+
-          |                                                       |
-          |  Window lifecycle and security                         |
-          |  Typed, allow-listed IPC handlers                     |
-          |  Local data/repository services                       |
-          |  SQLite access and migrations                         |
-          |  Skill loading/validation                              |
-          |  Routine execution controls                           |
-          |  Provider/integration adapters (optional)              |
-          |                                                       |
-          +----------------------|--------------------------------+
-                                 | contextBridge + typed IPC
-                                 v
-                    React + TypeScript Renderer
-                                 |
-              +------------------+-------------------+
-              |                  |                   |
-        Command Centre       Micro-Apps         Module pages
-        - central core       - quick capture    - Skills
-        - orbital nav        - notes            - Memory
-        - activity           - tasks/follow-up  - Routines
-        - email/calendar     - reports          - Settings
+          v
++------------------ Node.js HTTP Server (server/server.js) -----------------+
+|  Binds 127.0.0.1:4780 only                                                |
+|                                                                          |
+|  +------------------ Static File Server ---------------------------------+|
+|  |  Serves public/index.html, CSS, JS modules (vanilla, no build step)  ||
+|  |  CSP headers on all responses                                        ||
+|  +------------------|---------------------------------------------------+|
+|                     |                                                    |
+|  +------------------ HTTP API (/api/*) ----------------------------------+|
+|  |  /api/health, /api/bootstrap                                         ||
+|  |  /api/store/:name       — CRUD for collections (inbox, tasks, notes, ||
+|  |                           docs, events, activity, runs, proposals)   ||
+|  |  /api/skills            — List, import, invoke skills               ||
+|  |  /api/routines          — List, run routines                        ||
+|  |  /api/runs              — Routine execution history                  ||
+|  |  /api/memory            — List, read, write, propose, approve       ||
+|  |  /api/search            — Cross-store + memory search               ||
+|  |  /api/settings          — App settings                               ||
+|  |  /api/integrations      — Integration registry (honesty gate)       ||
+|  |  /api/assistant         — Local deterministic command engine         ||
+|  |  /api/open-data         — Open data folder (Windows, origin check)  ||
+|  |  /api/shutdown          — Graceful shutdown (origin check)          ||
+|  +------------------|---------------------------------------------------+|
+|                     |                                                    |
+|  +------------------ Core Libraries (server/lib/) -----------------------+|
+|  |  util.js       — Atomic writes, safeJoin, redaction, IDs, dates     ||
+|  |  store.js      — JSON file stores, in-memory cache, write queues,   ||
+|  |                 optimistic concurrency (rev), backup recovery       ||
+|  |  skills.js     — Skill validation, rendering, invocation            ||
+|  |  routines.js   — Routine validation, execution, approval gates      ||
+|  |  memory.js     — Markdown areas, proposals, capture                 ||
+|  |  provider.js   — Local deterministic assistant (no external LLM)    ||
+|  +---------------------------------------------------------------------+|
++--------------------------------------------------------------------------+
 ```
-
-This is a proposed boundary, not a statement that these modules already exist. The Maker should update it if the inspected environment or a concrete requirement warrants another design.
 
 ## 3. Main modules and responsibilities
 
-### Renderer / command centre
+### Browser renderer (public/)
 
 Responsibilities:
-- Render the command-centre layout, central visualization, navigation, module panels, and visual states.
-- Collect user input and display results/status returned by approved main-process services.
-- Provide reduced-motion and lightweight visualization fallbacks.
+- Render the command-centre layout, central visualization (canvas particle core), navigation (orbital), module panels, and visual states.
+- Collect user input and display results/status returned by the HTTP API.
+- Provide reduced-motion and lightweight visualization fallbacks (`prefers-reduced-motion`).
+- All state fetched from `/api/bootstrap` and subsequent API calls.
 
 Must not:
 - Directly access arbitrary local files, operating-system APIs, credentials, or database handles.
 - Treat client-side display state as proof that an operation succeeded.
-- invent live integration data.
+- Invent live integration data.
 
-### Electron main process and preload bridge
+### Node.js HTTP Server (server/server.js)
 
 Responsibilities:
-- Create and manage the application window and process lifecycle.
-- Expose only documented, narrowly scoped IPC methods from the preload script using `contextBridge`.
-- Validate IPC arguments and enforce permissions at the main-process boundary.
-- Own database access, filesystem access, and privileged integrations.
-- Handle startup errors and controlled shutdown.
+- Create and manage the HTTP server lifecycle (startup, health, graceful shutdown).
+- Serve static assets with CSP headers.
+- Expose narrowly scoped HTTP API endpoints with validation at every trust boundary.
+- Own JSON file persistence, filesystem access, and privileged operations (e.g., opening Explorer).
+- Validate Origin/Referer on sensitive endpoints (CSRF protection).
+- Handle startup errors and controlled shutdown with write flush.
 
 Security defaults:
-- `nodeIntegration: false` in renderer contexts.
-- `contextIsolation: true`.
-- Use a restrictive Content Security Policy appropriate to the chosen build setup.
-- Avoid exposing a generic `exec`, arbitrary path read/write, or unrestricted IPC method to the renderer.
+- Binds `127.0.0.1` only.
+- Restrictive CSP on all responses.
+- Path traversal and symlink escape protection via `safeJoin`.
+- Input validation: collection allow-list, payload size limits, JSON structure checks.
+- Integration honesty gate: `connected` refused without configuration.
+- Secret redaction in logs and error responses.
 
-### Persistence layer
+### Persistence layer (server/lib/store.js + JSON files)
 
-Proposed SQLite database for structured data such as micro-app items, routine metadata/run history, settings, and skill metadata. Access it only through main-process services. Use versioned migrations and a documented backup/recovery method.
+- JSON files under `data/stores/*.json` for structured collections.
+- In-memory authoritative cache with per-collection write queues for serialization.
+- Optimistic concurrency control via `rev` counter (409 on stale update).
+- Atomic writes: temp file + fsync + retrying rename + `.bak` fallback for recovery.
+- Markdown files under `data/memory/` for inspectable memory areas.
+- Skill/routine manifests as JSON files under `data/skills/` and `data/routines/`.
 
-Store Markdown/text skill definitions and memory maps as files in an app-owned data directory where this improves portability and inspectability. Database records may index these files, but must not silently become the sole copy of user content.
+### Micro-apps (public/modules/*.js)
 
-The Maker must verify the selected driver's Electron compatibility and packaging requirements before committing to it.
+Five working micro-apps (all persist to JSON stores):
+- **Quick Capture** — Inbox capture with triage to task/note.
+- **Notes** — CRUD + search.
+- **Tasks** — Add/toggle/delete + tabs (open/done).
+- **Docs** — CRUD for skill artifacts and documents.
+- **Routine Launcher** — Run routines, view history.
 
-### Micro-app registry
+Only bundled, trusted micro-apps; no dynamic code loading.
 
-Each micro-app should expose metadata (stable ID, display name, description, version, entry point, permissions, and capability declaration) and a known set of UI and service capabilities. Initial micro-apps should be trusted, bundled application modules, not arbitrary downloaded code.
-
-First candidates:
-- Quick capture/inbox.
-- Notes and searchable knowledge.
-- Tasks and follow-ups.
-- Document/report workspace.
-
-Only ship a micro-app when its core action, state, persistence, and failure states work.
-
-### Skills service
+### Skills service (server/lib/skills.js)
 
 Responsibilities:
-- Discover skills from approved roots.
-- Parse and validate metadata and required sections.
-- Present skills for inspection and selection.
-- Compose only compatible, explicitly selected or appropriately suggested skills.
-- Keep skill instructions separate from privileged capabilities.
+- Discover skills from `data/skills/`.
+- Parse and validate metadata and required sections (schema, template, type).
+- Present skills for inspection and selection via `/api/skills`.
+- Invoke skills via `/api/skills/:id/invoke` with approval gate for self-triggered types.
+- Keep skill instructions separate from privileged capabilities (templates only).
 - Record selected skills and execution outcomes for auditability.
 
 Imported skills are untrusted content. A skill can describe a workflow but cannot grant itself filesystem, shell, network, or account access.
 
-### Memory service
+### Memory service (server/lib/memory.js)
 
 Responsibilities:
-- Maintain concise indexes/maps and organized, inspectable memory areas.
+- Maintain concise indexes/maps and organized, inspectable memory areas (inbox, preferences, projects, reference, workflow).
 - Separate temporary execution context from persistent user-approved memory.
 - Support review, edit, export, archive, and delete operations.
-- Record provenance and timestamps where practical.
-- Store feedback as a pending note or proposal; require user approval before calibrating/promoting it into a durable skill or memory rule.
+- Propose changes via `/api/memory/propose`; require approval via `/api/memory/proposals/:id/approve` before applying.
+- Record provenance and timestamps.
 
-### Routines service
+### Routines service (server/lib/routines.js)
 
 Responsibilities:
 - Represent routine definitions, status, input requirements, execution permissions, limits, and history.
-- Support user-triggered execution first.
-- Expose explicit pause/disable behavior and truthful outcomes.
-- Add passive monitoring or scheduling only after the user approves trigger sources, frequency, resource bounds, and behavior on failure.
+- Support user-triggered execution via `/api/routines/:id/run`.
+- Steps: query (filter collections), skill (invoke with approval gate), notify, notify-if (conditional).
+- Approval gates for skills marked with `gate: true`.
+- Daily run limits (`maxRunsPerDay`).
+- Persistent history in `runs` collection.
+- Explicit pause/disable behavior and truthful outcomes (success, failed, awaiting_approval, limit_reached).
 
 No autonomous recurring routine is enabled by default.
 
 ### Integration/provider adapters
 
-Use a provider-neutral interface for model/CLI/API interactions. Track provider identity, configured status, permissions, and supported capabilities. Confirm identifiers and endpoint compatibility in the live environment before declaring an adapter operational.
+Provider-neutral interface for model/CLI/API interactions (scaffolded in `server/lib/provider.js` and `store.js` integrations registry).
 
-External email/calendar integrations are optional. If they are not configured, display a clear disconnected state rather than simulated live data. Requests containing private content must not be sent externally unless the user has configured and authorized the relevant integration.
+External email/calendar integrations are optional. If not configured, display a clear disconnected state. Requests containing private content must not be sent externally unless the user has configured and authorized the relevant integration.
 
-Do not create a separate Express API or WebSocket server in the first milestone without a demonstrated requirement. Typed IPC is the default local boundary. If a local network service is later justified, bind only as narrowly as possible, add authentication/origin protections as appropriate, and document its threat model.
+No separate Express API or WebSocket server in Milestone 1. The HTTP server is the backend. If a local network service is later justified, bind only as narrowly as possible, add authentication/origin protections as appropriate, and document its threat model.
 
 ## 4. Data flow examples
 

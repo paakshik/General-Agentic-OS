@@ -70,6 +70,8 @@ class Store {
   constructor(dataDir) {
     this.dir = path.join(dataDir, 'stores');
     U.ensureDir(this.dir);
+    // Clean up stray .tmp files from previous crashes
+    U.cleanupStrayTmp(this.dir);
     this._cache = new Map(); // in-memory authoritative copy per collection
     this._queues = new Map(); // write queues per collection
     this.seed();
@@ -100,8 +102,13 @@ class Store {
   }
 
   _readFromDisk(name) {
-    const v = U.readJson(this.file(name), []);
-    return Array.isArray(v) ? v : [];
+    const file = this.file(name);
+    const result = U.readJsonWithBackup(file, []);
+    if (result && result.usedBackup) {
+      // Log that we recovered from backup - caller (server.js) should log this
+      this._lastRecovery = { file: name, path: file };
+    }
+    return Array.isArray(result) ? result : (result && result.data ? result.data : []);
   }
 
   // Get the authoritative in-memory copy, loading from disk if needed
@@ -138,16 +145,16 @@ class Store {
     return this._enqueueWrite(name, () => U.writeJsonAtomic(this.file(name), out));
   }
 
-  add(name, item) {
+  async add(name, item) {
     if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
     const arr = this._getCache(name);
     const full = Object.assign({ id: U.uid(), createdAt: U.nowIso(), updatedAt: U.nowIso(), rev: 1 }, item);
     arr.push(full);
-    this.save(name, arr);
+    await this.save(name, arr);
     return full;
   }
 
-  update(name, id, patch) {
+  async update(name, id, patch) {
     if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
     const arr = this._getCache(name);
     const i = arr.findIndex((x) => x.id === id);
@@ -160,15 +167,15 @@ class Store {
     }
 
     arr[i] = Object.assign({}, arr[i], patch, { updatedAt: U.nowIso(), rev: (arr[i].rev || 0) + 1 });
-    this.save(name, arr);
+    await this.save(name, arr);
     return arr[i];
   }
 
-  remove(name, id) {
+  async remove(name, id) {
     if (!COLLECTIONS.includes(name)) throw Object.assign(new Error('Unknown collection: ' + name), { status: 400 });
     const arr = this._getCache(name);
     const next = arr.filter((x) => x.id !== id);
-    this.save(name, next);
+    await this.save(name, next);
     return arr.length - next.length;
   }
 
@@ -178,7 +185,7 @@ class Store {
 
   putSettings(patch) {
     const cur = this.getSettings();
-    const allowed = ['name', 'version', 'shell', 'port', 'accent'];
+    const allowed = ['name', 'version', 'shell', 'port', 'accent', 'llm'];
     for (const k of Object.keys(patch || {})) {
       if (allowed.includes(k)) cur[k] = patch[k];
     }
@@ -207,6 +214,13 @@ class Store {
       return arr[i];
     }
     throw Object.assign(new Error('Nothing to update'), { status: 400 });
+  }
+
+  // Wait for all pending writes to complete (for graceful shutdown)
+  async flush() {
+    for (const [, queue] of this._queues) {
+      await queue;
+    }
   }
 }
 

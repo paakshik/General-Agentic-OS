@@ -36,18 +36,21 @@
 | Local storage/logs | Credentials or private content exposed | Keep secrets out of source control and ordinary logs; redact request bodies and headers; limit log retention and file permissions where practical. |
 | Dependency/build chain | Vulnerable or compromised package | Minimal dependencies, lockfile, review lifecycle scripts and native modules, update intentionally, verify packaging. |
 
-## 4. Electron security baseline
+## 4. Browser-based security baseline
 
-The Maker must confirm the built app follows the current Electron security guidance and verify these controls in actual code:
+The application runs as a local HTTP server (Node.js, zero dependencies) bound to `127.0.0.1` only, serving a vanilla JS frontend. The browser tab is the renderer; there is no Electron main process. Security controls are implemented in the server and validated in tests:
 
-- Renderer windows use `nodeIntegration: false` and `contextIsolation: true`.
-- Preload exposes only purpose-specific methods; no unrestricted `ipcRenderer`, filesystem object, shell executor, or generic invoke method is exposed.
-- Validate sender/frame identity and IPC argument shape on privileged handlers.
-- Apply a restrictive Content Security Policy consistent with development and production builds.
-- Deny unneeded navigation, new windows, permissions, and web content access by default.
-- If external web content is used, isolate it from privileged application windows and never load it into a privileged renderer.
-- Do not disable certificate validation or bypass security warnings.
-- Ensure the packaged application does not depend on development servers or unsafe remote code loading.
+- **Server binding**: HTTP server binds exclusively to `127.0.0.1` (localhost), never `0.0.0.0`.
+- **Origin validation**: Sensitive endpoints (`/api/shutdown`, `/api/open-data`) validate `Origin`/`Referer` headers against `http://127.0.0.1:<port>`.
+- **Content Security Policy**: All responses include restrictive CSP headers:
+  - Static assets: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'`
+  - API responses: `default-src 'none'; frame-ancestors 'none'`
+- **Path traversal protection**: `safeJoin` uses `fs.realpathSync` to canonicalize paths and prevent symlink escapes; validated in tests.
+- **Input validation**: All API endpoints validate collection names, payload sizes (≤1MB), JSON structure, and required fields.
+- **Integration honesty gate**: Integrations requiring configuration cannot be marked `connected` without valid config (returns 409).
+- **Secret redaction**: Logs and error responses redact common token patterns (sk-, nvapi-, ghp_, Bearer, api_key, token, secret, password).
+- **No arbitrary code execution**: Skills are data-only (reference/artifact/self-triggered); templates use safe token replacement, never `eval` or `Function`.
+- **No background routines**: Routines run only on explicit user trigger; no scheduler exists.
 
 ## 5. Filesystem and process controls
 

@@ -19,11 +19,29 @@ function redactSecrets(s) {
 }
 
 // Resolve rel inside base; return null on traversal attempts.
+// Uses fs.realpathSync to protect against symlink escapes.
+// Handles non-existent targets by checking the parent directory.
 function safeJoin(base, rel) {
-  const p = path.resolve(base, rel);
-  const b = path.resolve(base);
-  if (p === b || p.startsWith(b + path.sep)) return p;
-  return null;
+  try {
+    const target = path.resolve(base, rel);
+    const realBase = fs.realpathSync.native(base);
+    // For non-existent targets, check the parent directory's realpath
+    let realTarget;
+    try {
+      realTarget = fs.realpathSync.native(target);
+    } catch (e) {
+      // Target doesn't exist; check parent directory
+      const parent = path.dirname(target);
+      const realParent = fs.realpathSync.native(parent);
+      if (realParent === realBase || realParent.startsWith(realBase + path.sep)) return target;
+      return null;
+    }
+    if (realTarget === realBase || realTarget.startsWith(realBase + path.sep)) return target;
+    return null;
+  } catch (e) {
+    // Base doesn't exist or other FS error
+    return null;
+  }
 }
 
 function ensureDir(d) {
@@ -38,12 +56,96 @@ function readJson(file, fallback) {
   }
 }
 
-// Atomic-ish write: temp file + rename, so a crash never leaves truncated JSON.
+// Retry rename with backoff (Windows: EPERM/EBUSY from AV/indexing/editor locks).
+// Falls back to copy+delete. Keeps one .bak of previous version for recovery.
+function renameWithRetry(tmp, target, maxAttempts = 5) {
+  let attempt = 0;
+  while (true) {
+    try {
+      fs.renameSync(tmp, target);
+      return;
+    } catch (e) {
+      attempt++;
+      const isWindowsRetryable = process.platform === 'win32' &&
+        (e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES');
+      if (attempt >= maxAttempts || !isWindowsRetryable) {
+        // Fallback: copy then unlink
+        try {
+          fs.copyFileSync(tmp, target);
+          fs.unlinkSync(tmp);
+          return;
+        } catch (e2) {
+          throw Object.assign(new Error('Rename failed and fallback copy failed: ' + e2.message), { cause: e });
+        }
+      }
+      // Exponential backoff 20-100ms
+      const delay = 20 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 20);
+      const start = Date.now();
+      while (Date.now() - start < delay) { /* busy wait for short delays */ }
+    }
+  }
+}
+
+// Atomic JSON write: temp file + fsync + retrying rename.
+// Keeps one .bak of the previous version for recovery on corruption.
 function writeJsonAtomic(file, data) {
   ensureDir(path.dirname(file));
   const tmp = file + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, file);
+  const bak = file + '.bak';
+
+  // Write to temp file
+  const content = JSON.stringify(data, null, 2);
+  fs.writeFileSync(tmp, content);
+
+  // fsync the temp file to ensure it hits disk before rename
+  // Use 'r+' mode (read+write) which works for fsync on Windows
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'r+');
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+
+  // If target exists, create/refresh .bak before rename
+  if (fs.existsSync(file)) {
+    try { fs.copyFileSync(file, bak); } catch (e) { /* non-fatal */ }
+  }
+
+  // Rename with retry (Windows-friendly)
+  renameWithRetry(tmp, file);
+}
+
+// Read JSON with fallback to .bak on corruption
+function readJsonWithBackup(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    // Try .bak
+    const bak = file + '.bak';
+    if (fs.existsSync(bak)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(bak, 'utf8'));
+        // Log that we fell back to backup (caller should log this)
+        return { data, usedBackup: true };
+      } catch (e2) {
+        // Both corrupted
+      }
+    }
+    return fallback;
+  }
+}
+
+// Clean up stray *.tmp files in a directory (call at startup)
+function cleanupStrayTmp(dir) {
+  try {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.tmp')) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch (e) { /* ignore */ }
+      }
+    }
+  } catch (e) { /* ignore */ }
 }
 
 function nowIso() {
@@ -71,15 +173,26 @@ function localDay(iso) {
   return isNaN(d.getTime()) ? '' : fmtLocalDay(d);
 }
 
-// Atomic text write (memory files): temp file + rename, so a crash never truncates.
+// Atomic text write (memory files): temp file + fsync + retrying rename.
 function writeFileAtomic(file, content) {
   ensureDir(path.dirname(file));
   const tmp = file + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
-  fs.writeFileSync(tmp, String(content));
-  fs.renameSync(tmp, file);
+  const str = String(content);
+  fs.writeFileSync(tmp, str);
+
+  // fsync
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'r+');
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+
+  renameWithRetry(tmp, file);
 }
 
 module.exports = {
-  redactSecrets, safeJoin, ensureDir, readJson, writeJsonAtomic, writeFileAtomic,
-  nowIso, uid, today, localDay
+  redactSecrets, safeJoin, ensureDir, readJson, readJsonWithBackup, writeJsonAtomic, writeFileAtomic,
+  cleanupStrayTmp, nowIso, uid, today, localDay
 };

@@ -60,7 +60,7 @@ function findSkill(skillsDir, id) {
 }
 
 // ctx: { date, tasksOpen, notesRecent, inboxItems, createDoc(title, content, source) }
-function invoke(entry, inputs, ctx, opts) {
+async function invoke(entry, inputs, ctx, opts) {
   const confirm = !!(opts && opts.confirm);
   const input = inputs && typeof inputs === 'object' ? inputs : {};
   const m = entry.manifest;
@@ -98,7 +98,7 @@ function invoke(entry, inputs, ctx, opts) {
     return { status: 'failed', reason: 'Skill has no output template.' };
   }
   const content = render(m.output.template, vars);
-  const doc = ctx.createDoc(m.name + ' — ' + ctx.date, content, 'skill:' + m.id);
+  const doc = await ctx.createDoc(m.name + ' — ' + ctx.date, content, 'skill:' + m.id);
   return { status: 'ok', kind: 'document', doc };
 }
 

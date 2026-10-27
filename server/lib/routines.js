@@ -42,7 +42,7 @@ function findRoutine(routinesDir, id) {
 
 // ctx: { listStore(name), invokeSkill(entry, inputs, {confirm}), notify(msg), runsToday(id) }
 // Returns { status, log, artifacts, notifications, startedAt, finishedAt }.
-function run(entry, ctx, approved) {
+async function run(entry, ctx, approved) {
   const m = entry.manifest;
   const log = [];
   const artifacts = [];
@@ -76,7 +76,7 @@ function run(entry, ctx, approved) {
           log.push({ step: label, status: 'awaiting_approval', detail: 'Approval gate before skill "' + s.skill + '". Re-run with approval to continue.' });
           break;
         }
-        const result = ctx.invokeSkill(s.skill, s.inputs || {}, { confirm: true });
+        const result = await ctx.invokeSkill(s.skill, s.inputs || {}, { confirm: true });
         if (result.status === 'ok') {
           if (result.doc) artifacts.push(result.doc.id);
           log.push({ step: label, status: 'ok', detail: 'skill "' + s.skill + '" → ' + result.kind });

@@ -482,9 +482,15 @@ VIEWS.activity = function (el, ctx) {
 
 /* ---------------- module: assistant ---------------- */
 VIEWS.assistant = function (el, ctx) {
+  const provider = (ctx.S && ctx.S.bootstrapProvider) || 'local-deterministic';
+  const providerLabel = provider === 'litellm' ? 'LiteLLM' : 'Local deterministic';
   el.innerHTML =
-    '<div class="sub" style="margin-bottom:8px">Local deterministic commands only — no model provider is configured, nothing leaves this machine. Type <b>help</b> for commands.</div>' +
-    '<div class="transcript" id="a-out"><div class="assistant-line sys">Meridian assistant ready.</div></div>' +
+    '<div class="sub" style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    '<span>Provider: <b>' + esc(providerLabel) + '</b></span>' +
+    (provider === 'local-deterministic' ? '<span class="chip local">Local only — no data leaves this machine</span>' : '<span class="chip ok">LLM enabled — chat naturally or use commands</span>') +
+    '<span class="sub" style="margin-left:auto">Type <b>help</b> for commands</span>' +
+    '</div>' +
+    '<div class="transcript" id="a-out"><div class="assistant-line sys">Meridian assistant ready (' + esc(providerLabel) + ').</div></div>' +
     '<div style="display:flex;gap:8px"><input id="a-in" placeholder="e.g. summary — or capture buy milk — or run morning-brief" style="flex:1"><button class="btn accent tiny" id="a-go">Send</button></div>';
   const out = el.querySelector('#a-out');
   function line(text, cls) {
@@ -513,10 +519,22 @@ VIEWS.assistant = function (el, ctx) {
 /* ---------------- module: settings ---------------- */
 VIEWS.settings = function (el, ctx) {
   const S = ctx.S;
+  const llm = (S.settings && S.settings.llm) || { enabled: false, baseUrl: '', apiKey: '', model: '' };
   el.innerHTML =
     '<div class="section-title">General</div>' +
     '<p class="sub">Name: ' + esc(S.settings.name) + ' · v' + esc(S.settings.version) + ' · shell: browser tab at http://127.0.0.1:' + esc(S.settings.port) + '</p>' +
     '<p class="sub">All data is stored in D:\\General-Agentic-OS\\data (JSON stores, skills, routines, memory, logs). <button class="btn tiny" id="s-open-data">Open data folder</button></p>' +
+
+    '<div class="section-title">LLM Provider (LiteLLM / OpenAI-compatible)</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px;max-width:600px">' +
+    '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="llm-enabled"' + (llm.enabled ? ' checked' : '') + ' style="width:auto"> Enable LLM provider</label>' +
+    '<input id="llm-baseUrl" type="text" placeholder="Base URL (e.g. http://127.0.0.1:4000)" value="' + esc(llm.baseUrl || '') + '" style="flex:1" disabled>' +
+    '<input id="llm-apiKey" type="password" placeholder="API Key (or dummy for local LiteLLM)" value="' + esc(llm.apiKey || '') + '" style="flex:1" disabled>' +
+    '<input id="llm-model" type="text" placeholder="Model name (e.g. nemotron-3-ultra)" value="' + esc(llm.model || '') + '" style="flex:1" disabled>' +
+    '<button class="btn tiny accent" id="llm-save" disabled>Save LLM config</button>' +
+    '<span class="sub" id="llm-status"></span>' +
+    '</div>' +
+
     '<div class="section-title">Integrations — honest states only</div>' +
     (S.integrations || []).map((i) =>
       '<div class="app-row"><div class="app-meta"><b>' + esc(i.name) + '</b><span>' + esc(i.note || '') + '</span></div>' +
@@ -532,6 +550,38 @@ VIEWS.settings = function (el, ctx) {
   el.querySelector('#s-open-data').addEventListener('click', async () => {
     try { await API.post('/api/open-data'); } catch (e) { toast(e.message, 'error'); }
   });
+  // LLM config handlers
+  const llmEnabled = el.querySelector('#llm-enabled');
+  const llmBaseUrl = el.querySelector('#llm-baseUrl');
+  const llmApiKey = el.querySelector('#llm-apiKey');
+  const llmModel = el.querySelector('#llm-model');
+  const llmSave = el.querySelector('#llm-save');
+  const llmStatus = el.querySelector('#llm-status');
+  function updateLlmInputs() {
+    const en = llmEnabled.checked;
+    llmBaseUrl.disabled = !en;
+    llmApiKey.disabled = !en;
+    llmModel.disabled = !en;
+    llmSave.disabled = !en;
+  }
+  llmEnabled.addEventListener('change', updateLlmInputs);
+  llmSave.addEventListener('click', async () => {
+    try {
+      const config = {
+        enabled: llmEnabled.checked,
+        baseUrl: llmBaseUrl.value.trim(),
+        apiKey: llmApiKey.value.trim(),
+        model: llmModel.value.trim() || 'nemotron-3-ultra'
+      };
+      await API.put('/api/settings', { llm: config });
+      llmStatus.textContent = 'Saved. Refreshing…';
+      await ctx.refresh(true);
+      VIEWS.settings(el, ctx);
+      toast('LLM configuration saved', 'ok');
+    } catch (e) { toast(e.message, 'error'); llmStatus.textContent = 'Error: ' + e.message; }
+  });
+  updateLlmInputs();
+
   el.querySelectorAll('[data-cfg]').forEach((b) => b.addEventListener('click', () => {
     const i = (S.integrations || []).find((x) => x.id === b.dataset.cfg);
     toast('Required configuration: ' + ((i && i.configNeeded) || []).join('; ') + '. Meridian OS will not connect or fetch anything until you provide it. (Integration features arrive in later milestones.)', 'info');
